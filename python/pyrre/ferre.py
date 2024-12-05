@@ -603,11 +603,19 @@ def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
     print('INTER = ',inter)
     print('ALGOR = ',algor)
     print('INIT = ',init)
-    print('INDINI = ',indini)
+    if indini is None:
+        print('INDINI = 1')
+    else:
+        print('INDINI = ',indini)
     print('NRUNS = ',nruns)
     print('CONT = ',cont)
     print('NCONT = ',ncont)
     print('ERRBAR = ',errbar)
+
+    fr = FERRE(grid=gridfile,verbose=0)
+    ndim = fr.nlabels
+    gridcenter = np.mean(fr.ranges,axis=1)
+    sgridcenter = (ndim*'{:.3f} ').format(*gridcenter)
     
     # Create fitting input file
     gridbase = os.path.basename(gridfile)    
@@ -616,9 +624,9 @@ def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
     os.symlink(gridfile.replace('.dat','.hdr'),tmpdir+'/'+gridbase.replace('.dat','.hdr'))
     lines = []
     lines += ["&LISTA"]
-    lines += ["NDIM = 4"]
-    lines += ["NOV = 4"]
-    lines += ["INDV = 1 2 3 4"]
+    lines += ["NDIM = "+str(ndim)]
+    lines += ["NOV = "+str(ndim)]
+    lines += ["INDV = "+" ".join((np.arange(ndim)+1).astype(str))]
     lines += ["SYNTHFILE(1) = '"+gridbase+"'"]
     lines += ["F_FORMAT = 1"]
     lines += ["INTER = "+str(inter)]    # cubic Bezier interpolation
@@ -681,7 +689,8 @@ def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
         slist[i]['ferre_fline'] = obs
         slist[i]['ferre_eline'] = obserr
         slist[i]['ferre_wline'] = obswave     
-        slist[i]['ferre_pline'] = 'spec'+str(i+1)+' 4000.0  2.5  -0.5  0.1'
+        slist[i]['ferre_pline'] = 'spec'+str(i+1)+' '+sgridcenter
+        #slist[i]['ferre_pline'] = 'spec'+str(i+1)+' 4000.0  2.5  -0.5  0.1'
         slist[i]['ferre_id'] = 'spec'+str(i+1)
         
         flines.append(slist[i]['ferre_fline'])
@@ -708,7 +717,6 @@ def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
         fout.close()        
         #traceback.print_exc()
         pass
-
     
     # Read the output
     olines = dln.readlines('ferre.opf')
@@ -719,45 +727,50 @@ def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
     print(str(nolines)+' lines in output files')
 
     # Loop over slist
+    outlist = []
     for i in range(len(slist)):
         slist1 = slist[i]
+        outlist1 = {}
         filename = slist1['filename']
         ferre_id = slist1['ferre_id']
+        outlist1['filename'] = filename
+        outlist1['ferre_id'] = ferre_id
         
         # Find the right output line for this star
         ind, = np.where(ids==ferre_id)
         if len(ind)==0:
             print(ferre_id+' not found in output file')
-            slist1['success'] = False            
-            slist1['pars'] = None
-            slist1['parerr'] = None
-            slist1['snr2'] = None
-            slist1['rchisq'] = None
-            slist1['model'] = None
-            slist1['smflux'] = None
+            outlist1['success'] = False            
+            outlist1['pars'] = None
+            outlist1['parerr'] = None
+            outlist1['snr2'] = None
+            outlist1['rchisq'] = None
+            outlist1['model'] = None
+            outlist1['smflux'] = None
             continue
         ind = ind[0]
         olines1 = olines[ind]
         mlines1 = mlines[ind]
         slines1 = slines[ind]
-
+        
         # opfile has name, pars, parerr, fraction of phot data points, log(S/N)^2, log(reduced chisq)
         arr = olines1.split()
-        pars = np.array(arr[1:5]).astype(float)
-        parerr = np.array(arr[5:9]).astype(float)
-        logsnr2 = float(arr[10])
-        snr2 = 10**logsnr2
+        pars = np.array(arr[1:ndim+1]).astype(float)
+        parerr = np.array(arr[1+ndim:1+2*ndim]).astype(float)
+        #logsnr2 = float(arr[-2])
+        #snr2 = 10**logsnr2
+        snr = float(arr[-2])
         try:
-            logrchisq = float(arr[11])
+            logrchisq = float(arr[-1])
             rchisq = 10**logrchisq
         except:
             logrchisq = np.nan
             rchisq = np.nan
-        slist1['success'] = True            
-        slist1['pars'] = pars
-        slist1['parerr'] = parerr   
-        slist1['snr2'] = snr2
-        slist1['rchisq'] = rchisq
+        outlist1['success'] = True            
+        outlist1['pars'] = pars
+        outlist1['parerr'] = parerr   
+        outlist1['snr'] = snr
+        outlist1['rchisq'] = rchisq
 
         mflux = np.array(mlines1.split()).astype(float)
         smflux = np.array(slines1.split()).astype(float)
@@ -766,15 +779,17 @@ def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
         if len(mflux) != slist1['npix']:
             mflux = mflux[0:slist1['npix']]
             smflux = smflux[0:slist1['npix']]
-        slist1['model'] = mflux
-        slist1['smflux'] = smflux
-
+        outlist1['wave'] = slist1['wave']
+        outlist1['model'] = mflux
+        outlist1['smflux'] = smflux
+        outlist.append(outlist1)
+        
     # Delete temporary files and directory
     if save==False:    
         os.chdir(curdir)
         shutil.rmtree(tmpdir)
 
-    return slist
+    return outlist
 
 def specprep(spec,vrel=None):
     """ Prepare the spectra for input to FERRE """
